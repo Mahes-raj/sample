@@ -9,30 +9,30 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Checkout the repository
+      # 1. Checkout the repository
       - name: Checkout code
         uses: actions/checkout@v3
 
-      # Log in to Docker Hub
+      # 2. Log in to Docker Hub
       - name: Log in to Docker Hub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKER_HUB_USERNAME }}
           password: ${{ secrets.DOCKER_HUB_PASSWORD }}
 
-      # Build the Docker image (tests run during build)
+      # 3. Build the Docker image (tests run during build)
       - name: Build Docker image
         run: |
           IMAGE_NAME=${{ secrets.DOCKER_HUB_USERNAME }}/myapp:latest
           docker build -t $IMAGE_NAME .
 
-      # Push the Docker image if tests passed
+      # 4. Push the Docker image if tests passed
       - name: Push Docker image
         run: |
           IMAGE_NAME=${{ secrets.DOCKER_HUB_USERNAME }}/myapp:latest
           docker push $IMAGE_NAME
 
-      # Deploy to EC2
+      # 5. Deploy to EC2 instance
       - name: Deploy on EC2
         uses: appleboy/ssh-action@v1.0.0
         with:
@@ -50,7 +50,7 @@ jobs:
               sudo systemctl enable docker
             fi
 
-            # Stop container if it is running
+            # Stop container if it exists
             if [ "$(sudo docker ps -q -f name=myapp-container)" ]; then
               echo "Stopping existing container..."
               sudo docker stop myapp-container
@@ -62,8 +62,14 @@ jobs:
               sudo docker rm myapp-container
             fi
 
-            # Pull latest image
+            # Check if port 5000 is still in use
+            if sudo lsof -i :5000 | grep LISTEN; then
+              echo "Port 5000 is in use. Killing process..."
+              sudo lsof -t -i :5000 | xargs -r sudo kill -9
+            fi
+
+            # Pull the latest image
             sudo docker pull $IMAGE_NAME
 
-            # Run container
+            # Run the container
             sudo docker run -d --name myapp-container -p 5000:5000 $IMAGE_NAME
