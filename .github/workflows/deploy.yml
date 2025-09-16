@@ -1,0 +1,81 @@
+name: CI/CD Pipeline to EC2
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout repository
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # 2. Generate testscript.sh dynamically in the workspace
+      - name: Create testscript.sh
+        run: |
+          cat << 'EOF' > testscript.sh
+          #!/bin/sh
+          echo "Running tests..."
+          if [ -f server.js ]; then
+            echo "server.js exists: Test passed"
+          else
+            echo "server.js missing: Test failed"
+            exit 1
+          fi
+          echo "All tests passed!"
+          exit 0
+          EOF
+          chmod +x testscript.sh
+
+      # 3. Set up Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      # 4. Log in to Docker Hub
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_HUB_USERNAME }}
+          password: ${{ secrets.DOCKER_HUB_PASSWORD }}
+
+      # 5. Build Docker image including testscript.sh
+      - name: Build Docker image
+        run: |
+          IMAGE_NAME=${{ secrets.DOCKER_HUB_USERNAME }}/myapp:latest
+          docker build -t $IMAGE_NAME .
+
+      # 6. Run tests inside the container
+      - name: Run test script inside container
+        run: |
+          IMAGE_NAME=${{ secrets.DOCKER_HUB_USERNAME }}/myapp:latest
+          docker run --rm $IMAGE_NAME sh -c "./testscript.sh"
+
+      # 7. Push Docker image if tests passed
+      - name: Push Docker image
+        run: |
+          IMAGE_NAME=${{ secrets.DOCKER_HUB_USERNAME }}/myapp:latest
+          docker push $IMAGE_NAME
+
+      # 8. Deploy container on EC2
+      - name: Deploy on EC2
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          debug: true
+          script: |
+            IMAGE_NAME=${{ secrets.DOCKER_HUB_USERNAME }}/myapp:latest
+            if ! command -v docker > /dev/null; then
+              sudo apt update
+              sudo apt install -y docker.io
+              sudo systemctl start docker
+              sudo systemctl enable docker
+            fi
+            sudo docker pull $IMAGE_NAME
+            sudo docker stop mycalcapp-container || true
+            sudo docker rm mycalcapp-container || true
+            sudo docker run -d --name mycalcapp-container -p 5000:5000 $IMAGE_NAME
